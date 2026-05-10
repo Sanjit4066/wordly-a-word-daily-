@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", "Georgia", serif;
+
+  --color-brand-bg: #FDFCFB;
+  --color-brand-surface: #FFFFFF;
+  --color-brand-primary: #1A1A1A;
+  --color-brand-accent: #E27D60;
+  --color-brand-muted: #8D8D8D;
+  --color-brand-border: #E8E6E1;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-brand-primary font-sans antialiased;
+  }
+
+  h1, h2, h3, h4, .serif {
+    @apply font-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-brand-border rounded-3xl shadow-sm hover:shadow-lg hover:shadow-brand-primary/5 transition-all duration-500;
+  }
+
+  .nav-link {
+    @apply text-sm font-medium text-brand-muted hover:text-brand-primary transition-all relative py-2 px-1;
+  }
+  
+  .nav-link.active {
+    @apply text-brand-primary;
+  }
+  
+  .nav-link.active::after {
+    @apply content-[''] absolute bottom-0 left-1 right-1 h-0.5 bg-brand-accent rounded-full;
+  }
+
+  .btn-primary {
+    @apply bg-brand-primary text-white px-8 py-3 rounded-2xl font-bold hover:bg-brand-accent transition-all duration-300 active:scale-95 shadow-xl shadow-brand-primary/10;
+  }
+
+  .technical-label {
+    @apply text-[11px] uppercase tracking-widest font-bold text-brand-muted;
+  }
+
+  .mono-data {
+    @apply font-mono text-[10px] uppercase tracking-wider opacity-60;
+  }
+
+  .brutalist-border {
+    @apply border border-brand-border;
+  }
+
+  .glass {
+    @apply bg-brand-bg/80 backdrop-blur-md border-b border-brand-border;
+  }
+}
+
+/* Fluid spacing and type */
+.content-area {
+  @apply max-w-7xl mx-auto px-6 md:px-12 py-12 md:py-24;
+}

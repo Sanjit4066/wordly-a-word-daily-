@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user progress and basic profile info.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "streak": { "type": "integer" },
+        "lastActiveAt": { "type": "string", "format": "date-time" },
+        "totalWordsMastered": { "type": "integer" },
+        "level": { "type": "integer" },
+        "xp": { "type": "integer" },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "dailyGoal": { "type": "integer" },
+            "remindersEnabled": { "type": "boolean" }
+          }
+        }
+      },
+      "required": ["uid", "displayName", "streak", "xp"]
+    },
+    "Word": {
+      "title": "Word Definition",
+      "description": "Deep insights and dictionary data for a word.",
+      "type": "object",
+      "properties": {
+        "term": { "type": "string" },
+        "phonetic": { "type": "string" },
+        "definition": { "type": "string" },
+        "partOfSpeech": { "type": "string" },
+        "examples": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "etymology": { "type": "string" },
+        "synonyms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "antonyms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "difficulty": { "type": "string", "enum": ["simple", "intermediate", "advanced", "expert"] },
+        "usageDepth": { "type": "string" }
+      },
+      "required": ["term", "definition"]
+    },
+    "UserWord": {
+      "title": "User's Word Progress",
+      "description": "Tracks a user's mastery level and practice sentences for a specific word.",
+      "type": "object",
+      "properties": {
+        "word": { "type": "string" },
+        "meaning": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "reviewed"] },
+        "aiGenerated": { "type": "boolean" },
+        "sentences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "required": ["word", "meaning", "status"]
+    },
+    "DailyLog": {
+      "title": "Daily Activity Log",
+      "description": "Tracks daily visits for streak calculation.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "wordsLearned": { "type": "integer" },
+        "quizScore": { "type": "integer" }
+      },
+      "required": ["userId", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile and progress."
+    },
+    "/users/{userId}/words/{userWordId}": {
+      "schema": "UserWord",
+      "description": "Words tracked by the user."
+    },
+    "/users/{userId}/logs/{logId}": {
+      "schema": "DailyLog",
+      "description": "Daily activity records."
+    },
+    "/global_words/{wordId}": {
+      "schema": "Word",
+      "description": "Global dictionary cache to avoid redundant AI generation."
+    }
+  }
+}
