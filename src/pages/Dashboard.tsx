@@ -16,12 +16,14 @@ import {
   Loader2,
   Mic,
   Camera,
-  Keyboard
+  Keyboard,
+  RotateCcw,
+  XCircle
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, limit, getDocs, orderBy, doc, getDoc, setDoc, updateDoc, serverTimestamp, increment, arrayUnion } from 'firebase/firestore';
-import { suggestDailyWord, generateWordDetails, WordDefinition, verifyReview, getWritingGuidance, analyzeSentence, SentenceAnalysis } from '../services/geminiService';
+import { suggestDailyWord, generateWordDetails, WordDefinition, verifyReview, getWritingGuidance, analyzeSentence, SentenceAnalysis, ReviewResult } from '../services/geminiService';
 import { Link } from 'react-router-dom';
 import { UserWord, Sentence } from '../types';
 import { BrainCircuit, Lightbulb, Send } from 'lucide-react';
@@ -41,7 +43,8 @@ const Dashboard: React.FC = () => {
     const [reviewSentences, setReviewSentences] = useState(['', '']);
     const [reviewMode, setReviewMode] = useState<'KEYBOARD' | 'VOICE' | 'IMAGE'>('KEYBOARD');
     const [reviewLoading, setReviewLoading] = useState(false);
-    const [reviewFeedback, setReviewFeedback] = useState<string | null>(null);
+    const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
+    const [reviewAttempt, setReviewAttempt] = useState(0);
     const [discoverySentence, setDiscoverySentence] = useState('');
     const [savingSentence, setSavingSentence] = useState(false);
     
@@ -202,11 +205,14 @@ const Dashboard: React.FC = () => {
     const handleReviewSubmit = async () => {
         if (!prevWord || !user) return;
         setReviewLoading(true);
-        setReviewFeedback(null);
+        setReviewResult(null);
+
+        const currentAttempt = reviewAttempt + 1;
+        setReviewAttempt(currentAttempt);
 
         try {
             const result = await verifyReview(prevWord.term, reviewMeaning, reviewSentences);
-            setReviewFeedback(result.feedback);
+            setReviewResult(result);
 
             if (result.passed) {
                 // Update prev log as reviewed
@@ -224,7 +230,7 @@ const Dashboard: React.FC = () => {
                     updatedAt: serverTimestamp()
                 };
 
-                // Update Word status (subcollection write next) - preserving metadata
+                // Update Word status
                 const wordRef = doc(db, 'users', user.uid, 'words', prevWord.term.toLowerCase());
                 const wordSnap = await getDoc(wordRef);
                 
@@ -259,13 +265,42 @@ const Dashboard: React.FC = () => {
                     const todayStr = new Date().toISOString().split('T')[0];
                     unlockToday(todayStr);
                 }, 2000);
+            } else if (currentAttempt >= 2) {
+                // After 2 failed attempts, mark as reviewed and move on
+                // Don't block the user from learning today's word
+                const logRef = doc(db, 'users', user.uid, 'logs', prevWord.id);
+                await setDoc(logRef, { reviewed: true }, { merge: true });
+
+                toast.info("Let's move on to today's word. You can revisit this word in your library anytime!");
+                
+                setTimeout(() => {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    unlockToday(todayStr);
+                }, 3000);
             }
+            // If first attempt failed, user can retry (the UI will show a retry button)
         } catch (err) {
             console.error(err);
-            setReviewFeedback("Validation service error. Please try again.");
+            setReviewResult({
+                passed: false,
+                meaningAccuracy: 'incorrect',
+                meaningFeedback: 'Validation service error. Please try again.',
+                sentence1Correct: false,
+                sentence1Feedback: '',
+                sentence2Correct: false,
+                sentence2Feedback: '',
+                correction: '',
+                tip: ''
+            });
         } finally {
             setReviewLoading(false);
         }
+    };
+
+    const handleRetry = () => {
+        setReviewResult(null);
+        setReviewMeaning('');
+        setReviewSentences(['', '']);
     };
 
     const playAudio = (term: string) => {
@@ -410,89 +445,224 @@ const Dashboard: React.FC = () => {
             </header>
 
             {phase === 'REVIEW' && (
-                <section className="max-w-3xl space-y-10 animate-in fade-in duration-700 slide-in-from-bottom-4">
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse"></div>
-                        <h4 className="technical-label">Phase 2: Memory Validation</h4>
-                    </div>
-                    <div className="card p-12 space-y-10 bg-white">
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                            <div className="space-y-2">
-                                <p className="text-sm font-bold text-brand-muted uppercase tracking-widest">Yesterday's Keyword</p>
-                                <h3 className="text-6xl font-serif font-black italic text-brand-accent">{prevWord?.term}</h3>
-                            </div>
-                            <div className="flex bg-brand-bg p-1 rounded-2xl gap-1">
-                                <button onClick={() => setReviewMode('KEYBOARD')} className={`p-3 rounded-xl transition-all ${reviewMode === 'KEYBOARD' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Keyboard className="w-4 h-4"/></button>
-                                <button onClick={() => setReviewMode('VOICE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'VOICE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Mic className="w-4 h-4"/></button>
-                                <button onClick={() => setReviewMode('IMAGE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'IMAGE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Camera className="w-4 h-4"/></button>
-                            </div>
+                <section className="space-y-10 animate-in fade-in duration-700 slide-in-from-bottom-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse"></div>
+                            <h4 className="technical-label">Phase 2: Memory Validation</h4>
                         </div>
+                        {reviewAttempt > 0 && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-brand-muted">
+                                Attempt {reviewAttempt} of 2
+                            </span>
+                        )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8 items-start">
+                        {/* Left: Input Form */}
+                        <div className="card p-10 md:p-12 space-y-10 bg-white">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                <div className="space-y-2">
+                                    <p className="text-sm font-bold text-brand-muted uppercase tracking-widest">Yesterday's Keyword</p>
+                                    <h3 className="text-5xl md:text-6xl font-serif font-black italic text-brand-accent">{prevWord?.term}</h3>
+                                </div>
+                                <div className="flex bg-brand-bg p-1 rounded-2xl gap-1">
+                                    <button onClick={() => setReviewMode('KEYBOARD')} className={`p-3 rounded-xl transition-all ${reviewMode === 'KEYBOARD' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Keyboard className="w-4 h-4"/></button>
+                                    <button onClick={() => setReviewMode('VOICE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'VOICE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Mic className="w-4 h-4"/></button>
+                                    <button onClick={() => setReviewMode('IMAGE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'IMAGE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Camera className="w-4 h-4"/></button>
+                                </div>
+                            </div>
 
-                        <div className="space-y-8">
-                            {reviewMode === 'KEYBOARD' ? (
-                                <>
-                                    <div className="space-y-4">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Meaning Reconstruction</label>
-                                        <textarea 
-                                            value={reviewMeaning}
-                                            onChange={(e) => setReviewMeaning(e.target.value)}
-                                            placeholder="Explain the definition in your own words..."
-                                            className="w-full p-6 border border-brand-border rounded-2xl font-serif italic text-lg bg-brand-bg/10 focus:outline-none focus:border-brand-accent transition-all"
-                                        />
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Semantic Integration (2 sentences)</label>
+                            <div className="space-y-8">
+                                {reviewMode === 'KEYBOARD' ? (
+                                    <>
                                         <div className="space-y-4">
-                                            <input 
-                                                type="text"
-                                                value={reviewSentences[0]}
-                                                onChange={(e) => setReviewSentences([e.target.value, reviewSentences[1]])}
-                                                placeholder="Example context 01..."
-                                                className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
-                                            />
-                                            <input 
-                                                type="text"
-                                                value={reviewSentences[1]}
-                                                onChange={(e) => setReviewSentences([reviewSentences[0], e.target.value])}
-                                                placeholder="Example context 02..."
-                                                className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
+                                            <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Meaning Reconstruction</label>
+                                            <textarea 
+                                                value={reviewMeaning}
+                                                onChange={(e) => setReviewMeaning(e.target.value)}
+                                                placeholder="Explain the definition in your own words..."
+                                                className="w-full p-6 border border-brand-border rounded-2xl font-serif italic text-lg bg-brand-bg/10 focus:outline-none focus:border-brand-accent transition-all"
+                                                disabled={reviewResult !== null}
                                             />
                                         </div>
+
+                                        <div className="space-y-4">
+                                            <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Semantic Integration (2 sentences)</label>
+                                            <div className="space-y-4">
+                                                <input 
+                                                    type="text"
+                                                    value={reviewSentences[0]}
+                                                    onChange={(e) => setReviewSentences([e.target.value, reviewSentences[1]])}
+                                                    placeholder="Example context 01..."
+                                                    className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
+                                                    disabled={reviewResult !== null}
+                                                />
+                                                <input 
+                                                    type="text"
+                                                    value={reviewSentences[1]}
+                                                    onChange={(e) => setReviewSentences([reviewSentences[0], e.target.value])}
+                                                    placeholder="Example context 02..."
+                                                    className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
+                                                    disabled={reviewResult !== null}
+                                                />
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="p-12 text-center bg-brand-bg/20 border-2 border-dashed border-brand-border rounded-3xl space-y-4">
+                                        {reviewMode === 'VOICE' ? <Mic className="w-12 h-12 mx-auto text-brand-muted animate-pulse" /> : <Camera className="w-12 h-12 mx-auto text-brand-muted" />}
+                                        <p className="text-sm font-bold uppercase tracking-widest text-brand-muted">
+                                            {reviewMode === 'VOICE' ? 'Listening for transcription...' : 'Upload OCR scan or capture image'}
+                                        </p>
+                                        <button className="text-[10px] font-black uppercase text-brand-accent hover:underline">Connect to sensor</button>
                                     </div>
-                                </>
-                            ) : (
-                                <div className="p-12 text-center bg-brand-bg/20 border-2 border-dashed border-brand-border rounded-3xl space-y-4">
-                                    {reviewMode === 'VOICE' ? <Mic className="w-12 h-12 mx-auto text-brand-muted animate-pulse" /> : <Camera className="w-12 h-12 mx-auto text-brand-muted" />}
-                                    <p className="text-sm font-bold uppercase tracking-widest text-brand-muted">
-                                        {reviewMode === 'VOICE' ? 'Listening for transcription...' : 'Upload OCR scan or capture image'}
-                                    </p>
-                                    <button className="text-[10px] font-black uppercase text-brand-accent hover:underline">Connect to sensor</button>
-                                </div>
-                            )}
+                                )}
+                            </div>
+
+                            {/* Submit / Retry Button */}
+                            {reviewResult === null ? (
+                                <button 
+                                    onClick={handleReviewSubmit}
+                                    disabled={reviewLoading || !reviewMeaning || !reviewSentences[0] || !reviewSentences[1]}
+                                    className="btn-primary w-full py-6 flex items-center justify-center gap-3 disabled:opacity-50"
+                                >
+                                    {reviewLoading ? (
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                    ) : (
+                                        <>
+                                            <span>Verify Recall</span>
+                                            <ArrowRight className="w-4 h-4" />
+                                        </>
+                                    )}
+                                </button>
+                            ) : !reviewResult.passed && reviewAttempt < 2 ? (
+                                <button 
+                                    onClick={handleRetry}
+                                    className="w-full py-6 flex items-center justify-center gap-3 bg-brand-bg border-2 border-brand-accent/30 text-brand-accent rounded-2xl font-bold uppercase tracking-widest text-[11px] hover:bg-brand-accent/5 hover:scale-[1.01] active:scale-[0.99] transition-all"
+                                >
+                                    <RotateCcw className="w-4 h-4" />
+                                    <span>Try Again (1 more chance)</span>
+                                </button>
+                            ) : null}
                         </div>
 
-                        {reviewFeedback && (
-                            <div className={`p-6 rounded-2xl flex items-start gap-4 ${reviewFeedback.includes('passed') || !reviewFeedback.includes('error') ? 'bg-brand-accent/10 border border-brand-accent/20' : 'bg-red-50 border border-red-100'}`}>
-                                <AlertCircle className="w-5 h-5 shrink-0 mt-1" />
-                                <p className="text-sm font-medium leading-relaxed">{reviewFeedback}</p>
-                            </div>
-                        )}
+                        {/* Right: Results Panel */}
+                        <AnimatePresence>
+                            {(reviewResult || reviewLoading) && (
+                                <motion.div
+                                    initial={{ opacity: 0, x: 20, scale: 0.97 }}
+                                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                                    exit={{ opacity: 0, x: 20, scale: 0.97 }}
+                                    transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                                    className="sticky top-28"
+                                >
+                                    {reviewLoading ? (
+                                        <div className="card p-10 bg-white space-y-6 border-brand-accent/20">
+                                            <div className="flex items-center gap-3">
+                                                <Loader2 className="w-5 h-5 text-brand-accent animate-spin" />
+                                                <h4 className="text-xs font-black uppercase tracking-widest text-brand-primary">Evaluating...</h4>
+                                            </div>
+                                            <div className="space-y-4">
+                                                <div className="h-4 bg-brand-bg rounded animate-pulse" />
+                                                <div className="h-4 bg-brand-bg rounded animate-pulse w-3/4" />
+                                                <div className="h-4 bg-brand-bg rounded animate-pulse w-1/2" />
+                                            </div>
+                                        </div>
+                                    ) : reviewResult && (
+                                        <div className={`card p-8 space-y-6 ${reviewResult.passed ? 'bg-green-50 border-green-200' : 'bg-white border-brand-border'}`}>
+                                            {/* Status Header */}
+                                            <div className={`flex items-center gap-3 pb-4 border-b ${reviewResult.passed ? 'border-green-200' : 'border-brand-border'}`}>
+                                                {reviewResult.passed ? (
+                                                    <CheckCircle2 className="w-6 h-6 text-green-500" />
+                                                ) : (
+                                                    <XCircle className="w-6 h-6 text-red-400" />
+                                                )}
+                                                <div>
+                                                    <h4 className={`text-sm font-black uppercase tracking-widest ${reviewResult.passed ? 'text-green-700' : 'text-brand-primary'}`}>
+                                                        {reviewResult.passed ? 'Recall Verified!' : 'Needs Improvement'}
+                                                    </h4>
+                                                    {!reviewResult.passed && reviewAttempt >= 2 && (
+                                                        <p className="text-[10px] text-brand-muted mt-1">Moving to today's word shortly...</p>
+                                                    )}
+                                                </div>
+                                            </div>
 
-                        <button 
-                            onClick={handleReviewSubmit}
-                            disabled={reviewLoading || !reviewMeaning || !reviewSentences[0] || !reviewSentences[1]}
-                            className="btn-primary w-full py-6 flex items-center justify-center gap-3 disabled:opacity-50"
-                        >
-                            {reviewLoading ? (
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                            ) : (
-                                <>
-                                    <span>Verify Recall</span>
-                                    <ArrowRight className="w-4 h-4" />
-                                </>
+                                            {/* Meaning Assessment */}
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    {reviewResult.meaningAccuracy === 'correct' ? (
+                                                        <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                                                    ) : reviewResult.meaningAccuracy === 'partial' ? (
+                                                        <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                                                    ) : (
+                                                        <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                                                    )}
+                                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Meaning</h5>
+                                                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                                                        reviewResult.meaningAccuracy === 'correct' ? 'bg-green-100 text-green-700' :
+                                                        reviewResult.meaningAccuracy === 'partial' ? 'bg-amber-100 text-amber-700' :
+                                                        'bg-red-100 text-red-600'
+                                                    }`}>
+                                                        {reviewResult.meaningAccuracy}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm font-serif italic text-brand-muted leading-relaxed pl-6">{reviewResult.meaningFeedback}</p>
+                                            </div>
+
+                                            {/* Sentence 1 */}
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    {reviewResult.sentence1Correct ? (
+                                                        <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                                                    ) : (
+                                                        <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                                                    )}
+                                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Sentence 1</h5>
+                                                </div>
+                                                <p className="text-sm font-serif italic text-brand-muted leading-relaxed pl-6">{reviewResult.sentence1Feedback}</p>
+                                            </div>
+
+                                            {/* Sentence 2 */}
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    {reviewResult.sentence2Correct ? (
+                                                        <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                                                    ) : (
+                                                        <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                                                    )}
+                                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Sentence 2</h5>
+                                                </div>
+                                                <p className="text-sm font-serif italic text-brand-muted leading-relaxed pl-6">{reviewResult.sentence2Feedback}</p>
+                                            </div>
+
+                                            {/* Correction */}
+                                            {reviewResult.correction && reviewResult.correction !== 'No corrections needed.' && (
+                                                <div className="p-4 bg-brand-accent/5 rounded-xl border border-brand-accent/15 space-y-2">
+                                                    <h5 className="text-[9px] font-black uppercase tracking-widest text-brand-accent">✎ Correction</h5>
+                                                    <p className="text-sm font-serif italic text-brand-primary leading-relaxed">{reviewResult.correction}</p>
+                                                </div>
+                                            )}
+
+                                            {/* Tip */}
+                                            {reviewResult.tip && (
+                                                <div className="p-4 bg-brand-primary rounded-xl space-y-1">
+                                                    <h5 className="text-[9px] font-black uppercase tracking-widest text-white/60">💡 Memory Tip</h5>
+                                                    <p className="text-sm font-serif italic text-white leading-relaxed">{reviewResult.tip}</p>
+                                                </div>
+                                            )}
+
+                                            {/* Success celebration */}
+                                            {reviewResult.passed && (
+                                                <div className="pt-4 text-center">
+                                                    <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">+25 XP earned • Loading today's word...</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </motion.div>
                             )}
-                        </button>
+                        </AnimatePresence>
                     </div>
                 </section>
             )}

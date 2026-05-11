@@ -1,8 +1,8 @@
 // Client-side AI service using @google/genai SDK
 import { GoogleGenAI, Type } from "@google/genai";
-import { WordDefinition, SentenceAnalysis, QuizQuestion } from '../types';
+import { WordDefinition, SentenceAnalysis, QuizQuestion, ReviewResult } from '../types';
 
-export { type WordDefinition, type SentenceAnalysis, type QuizQuestion };
+export { type WordDefinition, type SentenceAnalysis, type QuizQuestion, type ReviewResult };
 
 // Initialize AI with environment variable
 // In AI Studio, GEMINI_API_KEY is automatically injected into the browser environment.
@@ -148,21 +148,35 @@ export async function verifyReview(
     word: string, 
     userMeaning: string, 
     sentences: string[]
-): Promise<{ passed: boolean; feedback: string }> {
+): Promise<ReviewResult> {
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Verify if the user understands the word "${word}". \nUser's provided meaning: "${userMeaning}"\nUser's provided sentences:\n1. "${sentences[0]}"\n2. "${sentences[1]}"` }] }],
             config: {
-                systemInstruction: `You are a linguistic evaluator. Check if the meaning is accurate and the sentences are grammatically correct and use the word correctly in context. \nRespond in JSON format.`,
+                systemInstruction: `You are a concise linguistic evaluator. Assess the user's understanding clearly.
+
+RULES:
+- Be CONCISE. Each feedback field: max 1-2 sentences.
+- meaningAccuracy: "correct" if captures the core meaning, "partial" if somewhat right, "incorrect" if wrong.
+- passed: true ONLY if meaningAccuracy is "correct" or "partial" AND at least one sentence uses the word correctly.
+- correction: If anything is wrong, provide the correct version in 1 sentence. If all correct, say "No corrections needed."
+- tip: One practical tip to remember this word better (max 15 words).`,
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
                         passed: { type: Type.BOOLEAN },
-                        feedback: { type: Type.STRING, description: "Constructive feedback if they failed or praise if they passed." }
+                        meaningAccuracy: { type: Type.STRING, enum: ["correct", "partial", "incorrect"] },
+                        meaningFeedback: { type: Type.STRING, description: "1 sentence on meaning accuracy" },
+                        sentence1Correct: { type: Type.BOOLEAN },
+                        sentence1Feedback: { type: Type.STRING, description: "1 sentence on sentence 1" },
+                        sentence2Correct: { type: Type.BOOLEAN },
+                        sentence2Feedback: { type: Type.STRING, description: "1 sentence on sentence 2" },
+                        correction: { type: Type.STRING, description: "Corrected version if wrong, or 'No corrections needed.'" },
+                        tip: { type: Type.STRING, description: "One practical memory tip, max 15 words" }
                     },
-                    required: ["passed", "feedback"]
+                    required: ["passed", "meaningAccuracy", "meaningFeedback", "sentence1Correct", "sentence1Feedback", "sentence2Correct", "sentence2Feedback", "correction", "tip"]
                 }
             }
         });

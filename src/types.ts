@@ -43,6 +43,18 @@ export interface SentenceAnalysis {
   exemplarySentence: string;
 }
 
+export interface ReviewResult {
+    passed: boolean;
+    meaningAccuracy: 'correct' | 'partial' | 'incorrect';
+    meaningFeedback: string;
+    sentence1Correct: boolean;
+    sentence1Feedback: string;
+    sentence2Correct: boolean;
+    sentence2Feedback: string;
+    correction: string;
+    tip: string;
+}
+
 export interface QuizQuestion {
     question: string;
     options: string[];
