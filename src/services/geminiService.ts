@@ -11,7 +11,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 export async function getWritingGuidance(word: string, meaning: string, previousSentences: string[]): Promise<string> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Word: ${word}\nMeaning: ${meaning}\nHistory: ${previousSentences.join("; ")}\nProvide guidance in the requested format.` }] }],
             config: {
                 systemInstruction: `You are a sharp, concise writing mentor. STOP generating long essays or poetic lectures. 
@@ -35,7 +35,7 @@ export async function getWritingGuidance(word: string, meaning: string, previous
 export async function analyzeSentence(word: string, meaning: string, sentence: string, previousSentences: string[]): Promise<SentenceAnalysis> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Word: ${word}\nMeaning: ${meaning}\nSentence: "${sentence}"\nPrevious: ${previousSentences.join("; ")}` }] }],
             config: {
                 systemInstruction: `You are a sharp, fast writing editor. Override all previous stylistic behavior. No philosophical explorations.
@@ -75,7 +75,7 @@ export async function analyzeSentence(word: string, meaning: string, sentence: s
 export async function generatePracticeSentence(word: string, meaning: string): Promise<string> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Create a useful, clear practice sentence for the word "${word}" (meaning: ${meaning}). The sentence should be high-quality and demonstrate the word's correct usage in an elegant way.` }] }],
             config: {
                 systemInstruction: "You are a master of linguistic context. Provide only the sentence itself. No intro, no quotes, no extra notes.",
@@ -92,7 +92,7 @@ export async function generatePracticeSentence(word: string, meaning: string): P
 export async function generateWordDetails(word: string): Promise<WordDefinition> {
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: `Provide deep insights for the word: "${word}".` }] }],
       config: {
         systemInstruction: "You are an expert etymologist and linguist. Provide a comprehensive, academic but accessible breakdown of the given word. Focus on deep contextual usage and interesting etymological origins.",
@@ -130,7 +130,7 @@ export async function generateWordDetails(word: string): Promise<WordDefinition>
 export async function suggestDailyWord(level: number, difficulty: string = 'intermediate', exclusionList: string[] = []): Promise<string> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Suggest a daily vocabulary word for a user at level ${level} with a preference for ${difficulty} difficulty.\nIMPORTANT: Do NOT suggest any of these words: ${exclusionList.join(", ")}.` }] }],
             config: {
                 systemInstruction: "Suggest only the single word. No periods, no extra text. Pick something evocative and useful.",
@@ -151,7 +151,7 @@ export async function verifyReview(
 ): Promise<{ passed: boolean; feedback: string }> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Verify if the user understands the word "${word}". \nUser's provided meaning: "${userMeaning}"\nUser's provided sentences:\n1. "${sentences[0]}"\n2. "${sentences[1]}"` }] }],
             config: {
                 systemInstruction: `You are a linguistic evaluator. Check if the meaning is accurate and the sentences are grammatically correct and use the word correctly in context. \nRespond in JSON format.`,
@@ -176,7 +176,7 @@ export async function verifyReview(
 export async function generateQuiz(words: string[]): Promise<QuizQuestion[]> {
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Generate a 5-question multiple choice quiz to test mastery of these words: ${words.join(", ")}.` }] }],
             config: {
                 systemInstruction: "Create challenging questions that test contextual understanding, not just definitions.",
