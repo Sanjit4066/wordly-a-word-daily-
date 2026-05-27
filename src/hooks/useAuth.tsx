@@ -18,6 +18,8 @@ interface UserProfile {
   level: number;
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   lastActiveAt: any;
+  aiUsageToday?: number;
+  aiUsageDate?: string;
 }
 
 interface AuthContextType {
@@ -28,6 +30,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateDifficulty: (level: 'beginner' | 'intermediate' | 'advanced') => Promise<void>;
+  incrementAiUsage: () => Promise<void>;
+  syncAiUsageToMax: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -55,6 +59,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           level: 1,
           difficulty: 'intermediate',
           lastActiveAt: serverTimestamp(),
+          aiUsageToday: 0,
+          aiUsageDate: new Date().toLocaleDateString('en-CA'), // YYYY-MM-DD
         };
         await setDoc(docRef, newProfile);
         setProfile(newProfile);
@@ -109,8 +115,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const incrementAiUsage = async () => {
+    if (!user || !profile) return;
+    const localDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+    
+    let newUsage = 1;
+    if (profile.aiUsageDate === localDate) {
+        newUsage = (profile.aiUsageToday || 0) + 1;
+    }
+    
+    try {
+        const docRef = doc(db, 'users', user.uid);
+        await setDoc(docRef, { aiUsageToday: newUsage, aiUsageDate: localDate }, { merge: true });
+        setProfile({ ...profile, aiUsageToday: newUsage, aiUsageDate: localDate });
+    } catch (error) {
+        console.error("Failed to update AI usage", error);
+    }
+  };
+
+  const syncAiUsageToMax = async () => {
+    if (!user || !profile) return;
+    const localDate = new Date().toLocaleDateString('en-CA');
+    
+    try {
+        const docRef = doc(db, 'users', user.uid);
+        await setDoc(docRef, { aiUsageToday: 20, aiUsageDate: localDate }, { merge: true });
+        setProfile({ ...profile, aiUsageToday: 20, aiUsageDate: localDate });
+    } catch (error) {
+        console.error("Failed to sync AI usage to max", error);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, refreshProfile, updateDifficulty }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, refreshProfile, updateDifficulty, incrementAiUsage, syncAiUsageToMax }}>
       {children}
     </AuthContext.Provider>
   );

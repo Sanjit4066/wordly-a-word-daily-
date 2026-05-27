@@ -8,9 +8,59 @@ export { type WordDefinition, type SentenceAnalysis, type QuizQuestion, type Rev
 // In AI Studio, GEMINI_API_KEY is automatically injected into the browser environment.
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+// Retry wrapper for handling rate limits (429 errors)
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            const is429 = error?.status === 429 || 
+                          error?.message?.includes('429') || 
+                          error?.message?.includes('Too Many Requests') ||
+                          error?.message?.includes('RESOURCE_EXHAUSTED');
+            
+            if (is429 && attempt < maxRetries) {
+                // Exponential backoff: 2s, 4s
+                const delay = Math.pow(2, attempt + 1) * 1000;
+                console.warn(`Rate limited. Retrying in ${delay / 1000}s... (attempt ${attempt + 1}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+            
+            // Enhance error message for user-facing clarity
+            if (is429) {
+                const enhanced = new Error('Rate limit exceeded. Please wait a moment and try again.');
+                (enhanced as any).isRateLimit = true;
+                throw enhanced;
+            }
+            throw error;
+        }
+    }
+    throw new Error('Max retries exceeded');
+}
+
+export function getQuotaResetMessage(): string {
+    const now = new Date();
+    // Gemini API free tier daily quota resets at Pacific Time midnight, which is 8:00 AM UTC.
+    const ptMidnight = new Date();
+    ptMidnight.setUTCHours(8, 0, 0, 0);
+    if (now.getUTCHours() >= 8) {
+        ptMidnight.setUTCDate(ptMidnight.getUTCDate() + 1);
+    }
+    
+    const diffMs = ptMidnight.getTime() - now.getTime();
+    const diffHours = Math.ceil(diffMs / (1000 * 60 * 60));
+    
+    if (diffHours < 5) {
+        return `Limit reached. Try in ${diffHours}h.`;
+    } else {
+        return "Limit reached. Try tomorrow.";
+    }
+}
+
 export async function getWritingGuidance(word: string, meaning: string, previousSentences: string[]): Promise<string> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Word: ${word}\nMeaning: ${meaning}\nHistory: ${previousSentences.join("; ")}\nProvide guidance in the requested format.` }] }],
             config: {
@@ -24,7 +74,7 @@ export async function getWritingGuidance(word: string, meaning: string, previous
                 STRICT LIMIT: Under 80 words. Be fast and useful.`,
                 responseMimeType: "text/plain"
             }
-        });
+        }));
         return response.text?.trim() || "";
     } catch (error) {
         console.error("AI Guidance Error:", error);
@@ -34,7 +84,7 @@ export async function getWritingGuidance(word: string, meaning: string, previous
 
 export async function analyzeSentence(word: string, meaning: string, sentence: string, previousSentences: string[]): Promise<SentenceAnalysis> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Word: ${word}\nMeaning: ${meaning}\nSentence: "${sentence}"\nPrevious: ${previousSentences.join("; ")}` }] }],
             config: {
@@ -64,7 +114,7 @@ export async function analyzeSentence(word: string, meaning: string, sentence: s
                     required: ["evaluation", "whatWorks", "whatSoundsUnnatural", "suggestedRefinement", "advancedInsight", "exemplarySentence"]
                 }
             }
-        });
+        }));
         return JSON.parse(response.text || "{}");
     } catch (error) {
         console.error("AI Analyze Error:", error);
@@ -74,14 +124,14 @@ export async function analyzeSentence(word: string, meaning: string, sentence: s
 
 export async function generatePracticeSentence(word: string, meaning: string): Promise<string> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Create a useful, clear practice sentence for the word "${word}" (meaning: ${meaning}). The sentence should be high-quality and demonstrate the word's correct usage in an elegant way.` }] }],
             config: {
                 systemInstruction: "You are a master of linguistic context. Provide only the sentence itself. No intro, no quotes, no extra notes.",
                 responseMimeType: "text/plain"
             }
-        });
+        }));
         return response.text?.trim() || "";
     } catch (error) {
         console.error("AI Practice Sentence Error:", error);
@@ -91,11 +141,11 @@ export async function generatePracticeSentence(word: string, meaning: string): P
 
 export async function generateWordDetails(word: string): Promise<WordDefinition> {
   try {
-    const response = await ai.models.generateContent({
+    const response = await withRetry(() => ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: `Provide deep insights for the word: "${word}".` }] }],
       config: {
-        systemInstruction: "You are an expert etymologist and linguist. Provide a comprehensive, academic but accessible breakdown of the given word. Focus on deep contextual usage and interesting etymological origins.",
+        systemInstruction: "You are an expert etymologist and linguist. STRICT RULES: 1) 'definition' MUST be the single best, most commonly used meaning in 1-2 short sentences maximum. 2) 'etymology' MUST be a brief 1-2 sentence origin story. 3) 'usageDepth' MUST be 2 short sentences describing practical context. DO NOT write long paragraphs. Keep it punchy and easily readable.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -114,7 +164,7 @@ export async function generateWordDetails(word: string): Promise<WordDefinition>
           required: ["term", "definition", "phonetic", "partOfSpeech"]
         }
       }
-    });
+    }));
     const details = JSON.parse(response.text || "{}");
     // Ensure examples is always an array to avoid map errors
     if (!details.examples) details.examples = [];
@@ -129,14 +179,14 @@ export async function generateWordDetails(word: string): Promise<WordDefinition>
 
 export async function suggestDailyWord(level: number, difficulty: string = 'intermediate', exclusionList: string[] = []): Promise<string> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Suggest a daily vocabulary word for a user at level ${level} with a preference for ${difficulty} difficulty.\nIMPORTANT: Do NOT suggest any of these words: ${exclusionList.join(", ")}.` }] }],
             config: {
                 systemInstruction: "Suggest only the single word. No periods, no extra text. Pick something evocative and useful.",
                 responseMimeType: "text/plain"
             }
-        });
+        }));
         return (response.text || "").trim().toLowerCase().replace(/[^a-z]/g, '');
     } catch (error) {
         console.error("AI Suggest Word Error:", error);
@@ -150,7 +200,7 @@ export async function verifyReview(
     sentences: string[]
 ): Promise<ReviewResult> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Verify if the user understands the word "${word}". \nUser's provided meaning: "${userMeaning}"\nUser's provided sentences:\n1. "${sentences[0]}"\n2. "${sentences[1]}"` }] }],
             config: {
@@ -179,7 +229,7 @@ RULES:
                     required: ["passed", "meaningAccuracy", "meaningFeedback", "sentence1Correct", "sentence1Feedback", "sentence2Correct", "sentence2Feedback", "correction", "tip"]
                 }
             }
-        });
+        }));
         return JSON.parse(response.text || "{}");
     } catch (error) {
         console.error("AI Verify Review Error:", error);
@@ -189,7 +239,7 @@ RULES:
 
 export async function generateQuiz(words: string[]): Promise<QuizQuestion[]> {
     try {
-        const response = await ai.models.generateContent({
+        const response = await withRetry(() => ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `Generate a 5-question multiple choice quiz to test mastery of these words: ${words.join(", ")}.` }] }],
             config: {
@@ -209,7 +259,7 @@ export async function generateQuiz(words: string[]): Promise<QuizQuestion[]> {
                     }
                 }
             }
-        });
+        }));
         return JSON.parse(response.text || "[]");
     } catch (error) {
         console.error("AI Quiz Error:", error);

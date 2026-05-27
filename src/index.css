@@ -65,3 +65,44 @@
 .content-area {
   @apply max-w-7xl mx-auto px-6 md:px-12 py-12 md:py-24;
 }
+
+/* User input vs System response differentiation */
+.user-input-area {
+  border-left: 4px solid var(--color-brand-accent);
+  background: linear-gradient(135deg, rgba(226, 125, 96, 0.04) 0%, rgba(226, 125, 96, 0.01) 100%);
+  position: relative;
+}
+
+.user-input-area::before {
+  content: '✎ YOUR INPUT';
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--color-brand-accent);
+  background: var(--color-brand-bg);
+  padding: 0 8px;
+}
+
+.system-response-area {
+  border-left: 4px solid #5B9BD5;
+  background: linear-gradient(135deg, rgba(91, 155, 213, 0.05) 0%, rgba(91, 155, 213, 0.01) 100%);
+  position: relative;
+}
+
+.system-response-area::before {
+  content: '✦ MENTOR RESPONSE';
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #5B9BD5;
+  background: var(--color-brand-bg);
+  padding: 0 8px;
+}

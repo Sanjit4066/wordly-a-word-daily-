@@ -1,47 +1,49 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  ArrowLeft, 
-  Bookmark, 
-  CheckCircle, 
-  Volume2, 
-  Layers, 
-  History, 
-  Lightbulb, 
-  Sparkles,
-  Send,
-  Loader2,
-  BrainCircuit,
-  Clock,
-  ExternalLink,
-  Edit2,
-  Trash2,
-  Check,
-  X
+import {
+    ArrowLeft,
+    Bookmark,
+    CheckCircle,
+    Volume2,
+    Layers,
+    History,
+    Lightbulb,
+    Sparkles,
+    Send,
+    Loader2,
+    BrainCircuit,
+    Clock,
+    ExternalLink,
+    Edit2,
+    Trash2,
+    Check,
+    X,
+    Undo2
 } from 'lucide-react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  serverTimestamp, 
-  updateDoc, 
-  increment, 
-  arrayUnion, 
-  onSnapshot,
-  collection,
-  deleteDoc,
-  orderBy,
-  query
+import {
+    doc,
+    getDoc,
+    setDoc,
+    serverTimestamp,
+    updateDoc,
+    increment,
+    arrayUnion,
+    onSnapshot,
+    collection,
+    deleteDoc,
+    orderBy,
+    query
 } from 'firebase/firestore';
-import { 
-  generateWordDetails, 
-  generatePracticeSentence,
-  getWritingGuidance,
-  analyzeSentence,
-  WordDefinition,
-  SentenceAnalysis
+import {
+    generateWordDetails,
+    generatePracticeSentence,
+    getWritingGuidance,
+    analyzeSentence,
+    WordDefinition,
+    SentenceAnalysis,
+    getQuotaResetMessage
 } from '../services/geminiService';
 import { useAuth } from '../hooks/useAuth';
 import { UserWord, Sentence } from '../types';
@@ -50,16 +52,16 @@ import { toast } from 'sonner';
 
 const WordDetail: React.FC = () => {
     const { term } = useParams<{ term: string }>();
-    const { user, profile, refreshProfile } = useAuth();
+    const { user, profile, refreshProfile, incrementAiUsage, syncAiUsageToMax } = useAuth();
     const navigate = useNavigate();
-    
+
     const [wordDetails, setWordDetails] = useState<WordDefinition | null>(null);
     const [userWord, setUserWord] = useState<UserWord | null>(null);
     const [loading, setLoading] = useState(true);
     const [newSentence, setNewSentence] = useState('');
     const [aiLoading, setAiLoading] = useState(false);
     const [saving, setSaving] = useState(false);
-    
+
     const [aiGuidance, setAiGuidance] = useState<string | null>(null);
     const [aiFeedback, setAiFeedback] = useState<SentenceAnalysis | null>(null);
     const [feedbackLoading, setFeedbackLoading] = useState(false);
@@ -104,7 +106,7 @@ const WordDetail: React.FC = () => {
                 const globalWordPath = `global_words/${term.toLowerCase()}`;
                 const globalWordRef = doc(db, globalWordPath);
                 const globalSnap = await getDoc(globalWordRef);
-                
+
                 if (globalSnap.exists()) {
                     setWordDetails(globalSnap.data() as WordDefinition);
                 } else {
@@ -112,8 +114,13 @@ const WordDetail: React.FC = () => {
                     await setDoc(globalWordRef, details);
                     setWordDetails(details);
                 }
-            } catch (err) {
+            } catch (err: any) {
                 console.error("Error fetching word details:", err);
+                if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429') || err?.message?.includes('RESOURCE_EXHAUSTED')) {
+                    toast.error(getQuotaResetMessage());
+                } else {
+                    toast.error("Failed to discover word. Please try again later.");
+                }
             } finally {
                 setLoading(false);
             }
@@ -129,9 +136,15 @@ const WordDetail: React.FC = () => {
             const guidance = await getWritingGuidance(term, wordDetails.definition, previousSentences);
             setAiGuidance(guidance);
             setAiFeedback(null);
-        } catch (err) {
+            await incrementAiUsage();
+        } catch (err: any) {
             console.error("AI Guidance failed:", err);
-            toast.error("The mentor is currently reflecting. Please try again.");
+            if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+                toast.error(getQuotaResetMessage());
+                await syncAiUsageToMax();
+            } else {
+                toast.error("The mentor is currently reflecting. Please try again.");
+            }
         } finally {
             setAiLoading(false);
         }
@@ -149,11 +162,12 @@ const WordDetail: React.FC = () => {
             const analysis = await analyzeSentence(term, wordDetails?.definition || '', text.trim(), previousSentences);
             setAiFeedback(analysis);
             setAiGuidance(null);
+            await incrementAiUsage();
 
             const userWordRef = doc(db, 'users', user.uid, 'words', term.toLowerCase());
             const newSentenceId = crypto.randomUUID();
             const sentenceRef = doc(db, sentencesPath, newSentenceId);
-            
+
             const sentenceData = {
                 id: newSentenceId,
                 text: text.trim(),
@@ -187,11 +201,16 @@ const WordDetail: React.FC = () => {
 
             // Always add to subcollection
             await setDoc(sentenceRef, sentenceData);
-            
+
             setNewSentence('');
             toast.success("Sentence recorded. Mentor analysis complete.");
-        } catch (err) {
-            handleFirestoreError(err, OperationType.WRITE, sentencesPath);
+        } catch (err: any) {
+            if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+                toast.error(getQuotaResetMessage());
+                await syncAiUsageToMax();
+            } else {
+                handleFirestoreError(err, OperationType.WRITE, sentencesPath);
+            }
         } finally {
             setSaving(false);
             setFeedbackLoading(false);
@@ -207,7 +226,7 @@ const WordDetail: React.FC = () => {
                 text: text.trim(),
                 updatedAt: serverTimestamp()
             });
-            
+
             // If this was the last sentence, we should theoretically update the denormalized text 
             // if it happened to be the one shown. For simplicity, we can update it if it matches 
             // or just always update if it's the most recent in the list.
@@ -229,7 +248,7 @@ const WordDetail: React.FC = () => {
         const userWordRef = doc(db, 'users', user.uid, 'words', term.toLowerCase());
         try {
             await deleteDoc(doc(db, sentencePath));
-            
+
             // Update denormalized state
             const newLastSentence = realtimeSentences.find(s => s.id !== sentenceId);
             await updateDoc(userWordRef, {
@@ -255,6 +274,26 @@ const WordDetail: React.FC = () => {
                 xp: increment(25)
             });
             refreshProfile();
+            toast.success('Word marked as mastered! +25 XP');
+        } catch (err) {
+            handleFirestoreError(err, OperationType.WRITE, userWordPath);
+        }
+    };
+
+    const removeMastered = async () => {
+        if (!user || !term) return;
+        const userWordPath = `users/${user.uid}/words/${term.toLowerCase()}`;
+        try {
+            await updateDoc(doc(db, userWordPath), {
+                status: 'pending',
+                updatedAt: serverTimestamp()
+            });
+            // Deduct the XP that was awarded
+            await updateDoc(doc(db, 'users', user.uid), {
+                xp: increment(-25)
+            });
+            refreshProfile();
+            toast.success('Mastered status removed. Keep practicing!');
         } catch (err) {
             handleFirestoreError(err, OperationType.WRITE, userWordPath);
         }
@@ -287,7 +326,7 @@ const WordDetail: React.FC = () => {
         };
 
         return (
-            <motion.div 
+            <motion.div
                 layout
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -295,24 +334,24 @@ const WordDetail: React.FC = () => {
                 className="group bg-white p-6 rounded-2xl border border-brand-border/50 space-y-3 relative overflow-hidden"
             >
                 <div className="absolute top-0 left-0 w-1 h-full bg-brand-accent/20" />
-                
+
                 {isEditing ? (
                     <div className="space-y-4">
-                        <textarea 
+                        <textarea
                             autoFocus
                             value={editedText}
                             onChange={(e) => setEditedText(e.target.value)}
                             className="w-full bg-brand-bg/50 p-4 rounded-xl font-serif italic text-lg leading-relaxed focus:outline-none focus:ring-1 ring-brand-accent transition-all resize-none h-24"
                         />
                         <div className="flex items-center justify-end gap-3">
-                            <button 
+                            <button
                                 onClick={handleCancel}
                                 className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-muted hover:text-brand-primary transition-colors flex items-center gap-1.5"
                             >
                                 <X className="w-3.5 h-3.5" />
                                 Cancel
                             </button>
-                            <button 
+                            <button
                                 onClick={handleSave}
                                 disabled={!editedText.trim() || editedText.trim() === sentence.text}
                                 className="px-6 py-2 bg-brand-primary text-white rounded-full text-[9px] font-bold uppercase tracking-widest hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:scale-100 flex items-center gap-1.5"
@@ -329,14 +368,14 @@ const WordDetail: React.FC = () => {
                                 "{sentence.text}"
                             </p>
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
+                                <button
                                     onClick={() => setIsEditing(true)}
                                     className="p-2 text-brand-muted hover:text-brand-accent transition-colors"
                                     title="Edit sentence"
                                 >
                                     <Edit2 className="w-4 h-4" />
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setIsDeleting(true)}
                                     className="p-2 text-brand-muted hover:text-red-500 transition-colors"
                                     title="Delete sentence"
@@ -358,7 +397,7 @@ const WordDetail: React.FC = () => {
 
                         <AnimatePresence>
                             {isDeleting && (
-                                <motion.div 
+                                <motion.div
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
                                     exit={{ opacity: 0 }}
@@ -366,13 +405,13 @@ const WordDetail: React.FC = () => {
                                 >
                                     <p className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Remove this context from history?</p>
                                     <div className="flex items-center gap-3">
-                                        <button 
+                                        <button
                                             onClick={() => setIsDeleting(false)}
                                             className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-muted hover:text-brand-primary"
                                         >
                                             Keep
                                         </button>
-                                        <button 
+                                        <button
                                             onClick={() => deleteSentence(sentence.id)}
                                             className="px-6 py-2 bg-red-500 text-white rounded-full text-[9px] font-bold uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-lg shadow-red-500/20"
                                         >
@@ -400,7 +439,7 @@ const WordDetail: React.FC = () => {
     return (
         <div className="max-w-6xl mx-auto space-y-12 pb-32">
             <header className="flex items-center justify-between sticky top-24 glass py-4 px-8 z-30 rounded-full border border-brand-border">
-                <button 
+                <button
                     onClick={() => navigate(-1)}
                     className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-muted hover:text-brand-primary transition-colors"
                 >
@@ -408,30 +447,40 @@ const WordDetail: React.FC = () => {
                     Back
                 </button>
                 <div className="flex items-center gap-4">
-                   {userWord?.status === 'pending' && realtimeSentences.length > 0 && (
-                       <button 
-                        onClick={markReviewed}
-                        className="flex items-center gap-2 px-8 py-3 bg-brand-primary text-white rounded-full text-[11px] font-black uppercase tracking-widest hover:bg-brand-accent hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-accent/30"
-                       >
-                           <CheckCircle className="w-4 h-4" />
-                           Mark as Mastered
-                       </button>
-                   )}
-                   {userWord?.status === 'pending' && realtimeSentences.length === 0 && (
-                       <div className="px-6 py-2 bg-brand-bg text-brand-muted rounded-full text-[9px] font-bold uppercase tracking-widest border border-brand-border italic">
-                           Practice to Master
-                       </div>
-                   )}
-                   {userWord?.status === 'reviewed' && (
-                       <div className="flex items-center gap-2 px-6 py-2 bg-green-500 text-white rounded-full text-[10px] font-black uppercase tracking-widest border border-green-600 shadow-lg shadow-green-500/20">
-                           <CheckCircle className="w-3.5 h-3.5" />
-                           Mastered
-                       </div>
-                   )}
+                    {userWord?.status === 'pending' && realtimeSentences.length > 0 && (
+                        <button
+                            onClick={markReviewed}
+                            className="flex items-center gap-2 px-8 py-3 bg-brand-primary text-white rounded-full text-[11px] font-black uppercase tracking-widest hover:bg-brand-accent hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-accent/30"
+                        >
+                            <CheckCircle className="w-4 h-4" />
+                            Mark as Mastered
+                        </button>
+                    )}
+                    {userWord?.status === 'pending' && realtimeSentences.length === 0 && (
+                        <div className="px-6 py-2 bg-brand-bg text-brand-muted rounded-full text-[9px] font-bold uppercase tracking-widest border border-brand-border italic">
+                            Practice to Master
+                        </div>
+                    )}
+                    {userWord?.status === 'reviewed' && (
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 px-6 py-2 bg-green-500 text-white rounded-full text-[10px] font-black uppercase tracking-widest border border-green-600 shadow-lg shadow-green-500/20">
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Mastered
+                            </div>
+                            <button
+                                onClick={removeMastered}
+                                className="flex items-center gap-1.5 px-4 py-2 bg-white text-red-500 rounded-full text-[9px] font-bold uppercase tracking-widest border border-red-200 hover:bg-red-50 hover:border-red-300 hover:scale-105 active:scale-95 transition-all shadow-sm"
+                                title="Remove mastered status"
+                            >
+                                <Undo2 className="w-3 h-3" />
+                                Remove
+                            </button>
+                        </div>
+                    )}
                 </div>
             </header>
 
-            <motion.section 
+            <motion.section
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-16"
@@ -446,7 +495,7 @@ const WordDetail: React.FC = () => {
                         {wordDetails.term}
                     </h1>
                     <div className="flex items-center justify-center gap-6 mt-4">
-                        <button 
+                        <button
                             onClick={playAudio}
                             className="flex items-center gap-2 text-brand-muted hover:text-brand-accent transition-colors italic font-serif"
                         >
@@ -463,18 +512,18 @@ const WordDetail: React.FC = () => {
                     <div className="space-y-8">
                         <div className="card p-12 md:p-16 bg-white space-y-12">
                             <div className="space-y-8">
-                                <h3 className="text-3xl md:text-4xl font-serif font-medium leading-relaxed italic text-brand-primary">
-                                    "{wordDetails.definition}"
+                                <h3 className="text-2xl md:text-3xl font-sans font-medium leading-relaxed text-brand-primary">
+                                    {wordDetails.definition}
                                 </h3>
-                                
+
                                 <div className="pt-12 border-t border-brand-border space-y-10">
-                                    <h4 className="technical-label flex items-center gap-2 text-brand-muted">
+                                    <h4 className="technical-label flex items-center gap-2 text-brand-primary">
                                         <Layers className="w-4 h-4 text-brand-accent" />
                                         Contextual Samples
                                     </h4>
-                                    <div className="space-y-10">
+                                    <div className="space-y-6">
                                         {wordDetails.examples.map((ex, i) => (
-                                            <div key={i} className="pl-8 border-l-2 border-brand-accent/30 italic text-xl text-brand-muted font-serif leading-relaxed">
+                                            <div key={i} className="pl-6 border-l-4 border-brand-accent bg-brand-accent/5 py-5 pr-6 rounded-r-2xl text-xl text-brand-primary font-serif leading-relaxed shadow-sm">
                                                 "{ex}"
                                             </div>
                                         ))}
@@ -485,15 +534,15 @@ const WordDetail: React.FC = () => {
 
                         {/* Practice Interaction */}
                         <div className="card p-10 space-y-8 bg-brand-bg/20 border-brand-accent/20">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <Sparkles className="w-5 h-5 text-brand-accent" />
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div className="space-y-1">
                                     <h4 className="technical-label">Active Synthesis</h4>
+                                    <p className="text-[9px] text-brand-muted italic">💡 {profile?.aiUsageDate === new Date().toLocaleDateString('en-CA') ? (profile?.aiUsageToday || 0) : 0}/20 mentoring reviews daily</p>
                                 </div>
-                                <button 
+                                <button
                                     onClick={handleAiGuidance}
                                     disabled={aiLoading}
-                                    className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-brand-accent hover:text-brand-primary transition-colors disabled:opacity-50"
+                                    className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-brand-accent hover:text-brand-primary transition-colors disabled:opacity-50 self-start sm:self-auto"
                                 >
                                     {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
                                     Mentor Assistant
@@ -502,28 +551,28 @@ const WordDetail: React.FC = () => {
 
                             <AnimatePresence mode="wait">
                                 {aiGuidance && (
-                                    <motion.div 
+                                    <motion.div
                                         initial={{ opacity: 0, height: 0 }}
                                         animate={{ opacity: 1, height: 'auto' }}
                                         exit={{ opacity: 0, height: 0 }}
-                                        className="bg-brand-accent/5 p-6 rounded-2xl border border-brand-accent/20 space-y-3"
+                                        className="system-response-area bg-brand-accent/5 p-6 rounded-2xl border border-brand-accent/20 space-y-3 mt-4"
                                     >
                                         <div className="flex items-center gap-3">
                                             <Lightbulb className="w-4 h-4 text-brand-accent" />
                                             <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-accent">Mentor's Guidance</h5>
                                         </div>
-                                        <p className="text-sm font-serif italic text-brand-primary leading-relaxed">
+                                        <p className="text-base font-sans text-brand-primary leading-relaxed">
                                             {aiGuidance}
                                         </p>
                                     </motion.div>
                                 )}
 
                                 {aiFeedback && (
-                                    <motion.div 
+                                    <motion.div
                                         initial={{ opacity: 0, height: 0 }}
                                         animate={{ opacity: 1, height: 'auto' }}
                                         exit={{ opacity: 0, height: 0 }}
-                                        className="bg-white p-8 rounded-3xl border border-brand-border space-y-8 shadow-sm"
+                                        className="system-response-area bg-white p-8 rounded-3xl border border-brand-border space-y-8 shadow-sm mt-4"
                                     >
                                         <div className="flex items-center gap-3 pb-4 border-b border-brand-border">
                                             <BrainCircuit className="w-5 h-5 text-brand-accent" />
@@ -534,15 +583,15 @@ const WordDetail: React.FC = () => {
                                             <div className="space-y-6">
                                                 <div className="space-y-2">
                                                     <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-muted">Evaluation</h6>
-                                                    <p className="text-sm font-serif italic text-brand-primary">{aiFeedback.evaluation}</p>
+                                                    <p className="text-base font-sans text-brand-primary">{aiFeedback.evaluation}</p>
                                                 </div>
                                                 <div className="space-y-2">
                                                     <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-green-600">✓ What works</h6>
-                                                    <p className="text-sm font-serif italic text-brand-muted">{aiFeedback.whatWorks}</p>
+                                                    <p className="text-base font-sans text-brand-primary">{aiFeedback.whatWorks}</p>
                                                 </div>
                                                 <div className="space-y-2">
                                                     <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-accent">Better flow</h6>
-                                                    <div className="p-4 bg-brand-bg rounded-xl border border-brand-border italic font-serif text-brand-primary">
+                                                    <div className="p-5 bg-brand-bg rounded-xl border border-brand-border font-sans text-brand-primary text-base">
                                                         {aiFeedback.suggestedRefinement}
                                                     </div>
                                                 </div>
@@ -550,17 +599,17 @@ const WordDetail: React.FC = () => {
                                             <div className="space-y-6">
                                                 <div className="space-y-2">
                                                     <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-amber-600">△ Improve</h6>
-                                                    <p className="text-sm font-serif italic text-brand-muted">{aiFeedback.whatSoundsUnnatural}</p>
+                                                    <p className="text-base font-sans text-brand-primary">{aiFeedback.whatSoundsUnnatural}</p>
                                                 </div>
                                                 <div className="space-y-2">
                                                     <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-primary">Advanced tip</h6>
-                                                    <div className="p-6 bg-brand-primary text-white rounded-2xl shadow-lg leading-relaxed font-serif italic text-sm">
+                                                    <div className="p-6 bg-brand-primary text-white rounded-2xl shadow-lg leading-relaxed font-sans text-sm">
                                                         {aiFeedback.advancedInsight}
                                                     </div>
                                                 </div>
                                                 <div className="space-y-2">
-                                                    <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-accent">Exemplary Sentence</h6>
-                                                    <div className="p-6 bg-white border-2 border-brand-accent/30 rounded-2xl shadow-sm leading-relaxed font-serif italic text-lg text-brand-primary">
+                                                    <h6 className="text-[9px] font-black uppercase tracking-[0.2em] text-white bg-brand-accent inline-block px-3 py-1 rounded-full shadow-sm mb-1">Exemplary Sentence</h6>
+                                                    <div className="p-6 bg-gradient-to-br from-brand-accent to-orange-500 text-white rounded-2xl shadow-xl leading-relaxed font-serif text-2xl font-medium">
                                                         “{aiFeedback.exemplarySentence}”
                                                     </div>
                                                 </div>
@@ -570,14 +619,14 @@ const WordDetail: React.FC = () => {
                                 )}
                             </AnimatePresence>
 
-                            <div className="relative group">
-                                <textarea 
+                            <div className="relative group user-input-area p-2 rounded-[2.5rem] mt-4">
+                                <textarea
                                     value={newSentence}
                                     onChange={(e) => setNewSentence(e.target.value)}
                                     placeholder="Weave this word into a new context..."
-                                    className="w-full h-40 p-8 bg-white border border-brand-border rounded-[2.5rem] focus:outline-none focus:border-brand-accent transition-all font-serif italic text-2xl resize-none shadow-sm"
+                                    className="w-full h-40 p-8 bg-white border border-brand-accent/30 rounded-[2.5rem] focus:outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10 transition-all font-serif italic text-2xl resize-none shadow-sm"
                                 />
-                                <button 
+                                <button
                                     onClick={() => addSentence(newSentence)}
                                     disabled={saving || !newSentence.trim()}
                                     className="absolute bottom-6 right-6 px-8 py-4 bg-brand-accent text-white rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:scale-100 flex items-center gap-3 font-bold uppercase tracking-widest text-[10px]"
@@ -607,22 +656,23 @@ const WordDetail: React.FC = () => {
 
                     {/* Sidebar Details */}
                     <div className="space-y-8">
-                        <div className="card p-8 bg-brand-bg space-y-6 border-brand-border/40">
-                           <div className="flex items-center gap-3">
+                        <div className="card p-8 bg-slate-900 space-y-6 border-slate-800 shadow-xl relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-brand-accent/10 rounded-full blur-3xl -mr-10 -mt-10" />
+                            <div className="flex items-center gap-3 relative z-10">
                                 <History className="w-5 h-5 text-brand-accent" />
-                                <h4 className="technical-label">Etymological Roots</h4>
-                           </div>
-                           <div className="text-sm font-serif italic leading-relaxed text-brand-muted prose prose-sm max-w-none">
-                               <ReactMarkdown>{wordDetails.etymology || ''}</ReactMarkdown>
-                           </div>
+                                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-300">Etymological Roots</h4>
+                            </div>
+                            <div className="text-sm font-sans leading-relaxed text-slate-300 pr-2 relative z-10">
+                                <ReactMarkdown>{wordDetails.etymology || ''}</ReactMarkdown>
+                            </div>
                         </div>
 
-                        <div className="card p-8 bg-white space-y-6">
+                        <div className="card p-8 bg-orange-50 space-y-6 shadow-sm border-l-4 border-brand-accent">
                             <div className="flex items-center gap-3">
                                 <Lightbulb className="w-5 h-5 text-brand-accent" />
                                 <h4 className="technical-label">Contextual Nuance</h4>
                             </div>
-                            <div className="text-sm font-serif italic leading-relaxed text-brand-primary">
+                            <div className="text-sm font-sans leading-relaxed text-slate-800 pr-2">
                                 <ReactMarkdown>{wordDetails.usageDepth || ''}</ReactMarkdown>
                             </div>
                         </div>
@@ -632,7 +682,7 @@ const WordDetail: React.FC = () => {
                                 <h4 className="technical-label text-[9px]">Linguistic Relatives</h4>
                                 <div className="flex flex-wrap gap-2">
                                     {wordDetails.synonyms.map(s => (
-                                        <button 
+                                        <button
                                             key={s}
                                             onClick={() => navigate(`/word/${s}`)}
                                             className="px-3 py-1 bg-brand-bg text-[10px] font-bold text-brand-muted hover:text-brand-accent rounded-lg transition-colors border border-brand-border/50 flex items-center gap-1"

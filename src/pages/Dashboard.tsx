@@ -1,42 +1,42 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Trophy, 
-  Flame, 
-  BookOpen, 
-  ChevronRight,
-  TrendingUp,
-  Clock,
-  ExternalLink,
-  Zap,
-  Volume2,
-  CheckCircle2,
-  AlertCircle,
-  ArrowRight,
-  Loader2,
-  Mic,
-  Camera,
-  Keyboard,
-  RotateCcw,
-  XCircle
+import {
+    Trophy,
+    Flame,
+    BookOpen,
+    ChevronRight,
+    TrendingUp,
+    Clock,
+    ExternalLink,
+    Zap,
+    Volume2,
+    CheckCircle2,
+    AlertCircle,
+    ArrowRight,
+    Loader2,
+    Mic,
+    Camera,
+    Keyboard,
+    RotateCcw,
+    XCircle
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, limit, getDocs, orderBy, doc, getDoc, setDoc, updateDoc, serverTimestamp, increment, arrayUnion } from 'firebase/firestore';
-import { suggestDailyWord, generateWordDetails, WordDefinition, verifyReview, getWritingGuidance, analyzeSentence, SentenceAnalysis, ReviewResult } from '../services/geminiService';
+import { suggestDailyWord, generateWordDetails, WordDefinition, verifyReview, getWritingGuidance, analyzeSentence, SentenceAnalysis, ReviewResult, getQuotaResetMessage } from '../services/geminiService';
 import { Link } from 'react-router-dom';
 import { UserWord, Sentence } from '../types';
 import { BrainCircuit, Lightbulb, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Dashboard: React.FC = () => {
-    const { profile, user, updateDifficulty } = useAuth();
+    const { profile, user, updateDifficulty, incrementAiUsage, syncAiUsageToMax } = useAuth();
     const [todayWord, setTodayWord] = useState<WordDefinition | null>(null);
     const [recentWords, setRecentWords] = useState<any[]>([]);
     const [dailyLogs, setDailyLogs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [phase, setPhase] = useState<'CHECKING' | 'REVIEW' | 'DISCOVERY' | 'COMPLETE'>('CHECKING');
-    
+
     // Review State
     const [prevWord, setPrevWord] = useState<{ term: string; id: string } | null>(null);
     const [reviewMeaning, setReviewMeaning] = useState('');
@@ -47,7 +47,7 @@ const Dashboard: React.FC = () => {
     const [reviewAttempt, setReviewAttempt] = useState(0);
     const [discoverySentence, setDiscoverySentence] = useState('');
     const [savingSentence, setSavingSentence] = useState(false);
-    
+
     const [aiGuidance, setAiGuidance] = useState<string | null>(null);
     const [aiFeedback, setAiFeedback] = useState<SentenceAnalysis | null>(null);
     const [aiLoading, setAiLoading] = useState(false);
@@ -102,8 +102,13 @@ const Dashboard: React.FC = () => {
                 const wordsSnap = await getDocs(q);
                 setRecentWords(wordsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
-            } catch (err) {
+            } catch (err: any) {
                 console.error("Error fetching dashboard:", err);
+                if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429') || err?.message?.includes('RESOURCE_EXHAUSTED')) {
+                    toast.error(getQuotaResetMessage());
+                } else {
+                    toast.error("Failed to load dashboard data. Please try again.");
+                }
             } finally {
                 setLoading(false);
             }
@@ -116,7 +121,7 @@ const Dashboard: React.FC = () => {
         const globalWordPath = `global_words/${term.toLowerCase()}`;
         const globalWordRef = doc(db, globalWordPath);
         const globalSnap = await getDoc(globalWordRef);
-        
+
         if (globalSnap.exists()) {
             const data = globalSnap.data() as WordDefinition;
             setTodayWord(data);
@@ -156,7 +161,7 @@ const Dashboard: React.FC = () => {
 
     const unlockToday = async (dateStr: string) => {
         if (!user || !profile) return;
-        
+
         // Get exclusion list (last 40 days)
         const logsRef = collection(db, `users/${user.uid}/logs`);
         const qHistory = query(logsRef, orderBy('createdAt', 'desc'), limit(40));
@@ -165,7 +170,7 @@ const Dashboard: React.FC = () => {
 
         const suggested = await suggestDailyWord(profile?.level || 1, profile?.difficulty || 'intermediate', exclusionList);
         const logRef = doc(db, `users/${user.uid}/logs/${dateStr}`);
-        
+
         await setDoc(logRef, {
             userId: user.uid,
             date: dateStr,
@@ -178,7 +183,7 @@ const Dashboard: React.FC = () => {
         // Add to user's permanent lexicon automatically on discovery - ONLY if not exists to preserve history
         const wordRef = doc(db, 'users', user.uid, 'words', suggested.toLowerCase());
         const wordSnap = await getDoc(wordRef);
-        
+
         if (!wordSnap.exists()) {
             await setDoc(wordRef, {
                 word: suggested,
@@ -218,7 +223,7 @@ const Dashboard: React.FC = () => {
                 // Update prev log as reviewed
                 const logRef = doc(db, 'users', user.uid, 'logs', prevWord.id);
                 await setDoc(logRef, { reviewed: true }, { merge: true });
-                
+
                 const newSentenceId = crypto.randomUUID();
                 const sentencesPath = `users/${user.uid}/words/${prevWord.term.toLowerCase()}/sentences`;
                 const sentenceRef = doc(db, sentencesPath, newSentenceId);
@@ -233,9 +238,9 @@ const Dashboard: React.FC = () => {
                 // Update Word status
                 const wordRef = doc(db, 'users', user.uid, 'words', prevWord.term.toLowerCase());
                 const wordSnap = await getDoc(wordRef);
-                
+
                 if (!wordSnap.exists()) {
-                    await setDoc(wordRef, { 
+                    await setDoc(wordRef, {
                         word: prevWord.term,
                         status: 'reviewed',
                         updatedAt: serverTimestamp(),
@@ -272,7 +277,7 @@ const Dashboard: React.FC = () => {
                 await setDoc(logRef, { reviewed: true }, { merge: true });
 
                 toast.info("Let's move on to today's word. You can revisit this word in your library anytime!");
-                
+
                 setTimeout(() => {
                     const todayStr = new Date().toISOString().split('T')[0];
                     unlockToday(todayStr);
@@ -317,13 +322,19 @@ const Dashboard: React.FC = () => {
             const q = query(collection(db, `users/${user?.uid}/words/${todayWord.term.toLowerCase()}/sentences`), orderBy('createdAt', 'desc'), limit(5));
             const prevSentencesSnap = await getDocs(q);
             const prevSentences = prevSentencesSnap.docs.map(d => d.data().text as string);
-            
+
             const guidance = await getWritingGuidance(todayWord.term, todayWord.definition, prevSentences);
             setAiGuidance(guidance);
             setAiFeedback(null);
-        } catch (err) {
+            await incrementAiUsage();
+        } catch (err: any) {
             console.error(err);
-            toast.error("The mentor is currently reflecting.");
+            if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+                toast.error(getQuotaResetMessage());
+                await syncAiUsageToMax();
+            } else {
+                toast.error("The mentor is currently reflecting. Please try again.");
+            }
         } finally {
             setAiLoading(false);
         }
@@ -339,20 +350,20 @@ const Dashboard: React.FC = () => {
             // Get feedback
             const userWordRef = doc(db, 'users', user.uid, 'words', todayWord.term.toLowerCase());
             const userWordSnap = await getDoc(userWordRef);
-            
+
             // For analysis, we might need previous sentences
             // For simplicity in Dashboard (often first time seeing word), we can fetch some
             const q = query(collection(db, sentencesPath), orderBy('createdAt', 'desc'), limit(5));
             const prevSentencesSnap = await getDocs(q);
             const prevSentences = prevSentencesSnap.docs.map(d => d.data().text as string);
-            
+
             const analysis = await analyzeSentence(todayWord.term, todayWord.definition, discoverySentence.trim(), prevSentences);
             setAiFeedback(analysis);
             setAiGuidance(null);
 
             const newSentenceId = crypto.randomUUID();
             const sentenceRef = doc(db, sentencesPath, newSentenceId);
-            
+
             const sentenceData = {
                 id: newSentenceId,
                 text: discoverySentence.trim(),
@@ -387,8 +398,13 @@ const Dashboard: React.FC = () => {
 
             toast.success("Sentence recorded. Mentor analysis complete.");
             setDiscoverySentence('');
-        } catch (err) {
-            handleFirestoreError(err, OperationType.WRITE, sentencesPath);
+        } catch (err: any) {
+            if (err?.isRateLimit || err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+                toast.error(getQuotaResetMessage());
+                await syncAiUsageToMax();
+            } else {
+                handleFirestoreError(err, OperationType.WRITE, sentencesPath);
+            }
         } finally {
             setSavingSentence(false);
             setFeedbackLoading(false);
@@ -413,7 +429,7 @@ const Dashboard: React.FC = () => {
                         <span className="technical-label">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                     </div>
                     <h2 className="text-5xl md:text-7xl font-serif font-black italic tracking-tight leading-tight">
-                        Hello {profile?.displayName?.split(' ')[0]}, <br/>
+                        Hello {profile?.displayName?.split(' ')[0]}, <br />
                         <span className="text-brand-accent italic">Ready for your daily word?</span>
                     </h2>
                 </div>
@@ -430,11 +446,10 @@ const Dashboard: React.FC = () => {
                                 <button
                                     key={d}
                                     onClick={() => updateDifficulty?.(d as any)}
-                                    className={`px-4 py-2 rounded-2xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                                        (profile?.difficulty || 'intermediate') === d
-                                        ? 'bg-brand-accent text-white shadow-lg'
-                                        : 'text-brand-muted hover:text-brand-primary'
-                                    }`}
+                                    className={`px-4 py-2 rounded-2xl text-[10px] font-bold uppercase tracking-widest transition-all ${(profile?.difficulty || 'intermediate') === d
+                                            ? 'bg-brand-accent text-white shadow-lg'
+                                            : 'text-brand-muted hover:text-brand-primary'
+                                        }`}
                                 >
                                     {d}
                                 </button>
@@ -457,7 +472,7 @@ const Dashboard: React.FC = () => {
                             </span>
                         )}
                     </div>
-                    
+
                     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8 items-start">
                         {/* Left: Input Form */}
                         <div className="card p-10 md:p-12 space-y-10 bg-white">
@@ -467,43 +482,43 @@ const Dashboard: React.FC = () => {
                                     <h3 className="text-5xl md:text-6xl font-serif font-black italic text-brand-accent">{prevWord?.term}</h3>
                                 </div>
                                 <div className="flex bg-brand-bg p-1 rounded-2xl gap-1">
-                                    <button onClick={() => setReviewMode('KEYBOARD')} className={`p-3 rounded-xl transition-all ${reviewMode === 'KEYBOARD' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Keyboard className="w-4 h-4"/></button>
-                                    <button onClick={() => setReviewMode('VOICE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'VOICE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Mic className="w-4 h-4"/></button>
-                                    <button onClick={() => setReviewMode('IMAGE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'IMAGE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Camera className="w-4 h-4"/></button>
+                                    <button onClick={() => setReviewMode('KEYBOARD')} className={`p-3 rounded-xl transition-all ${reviewMode === 'KEYBOARD' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Keyboard className="w-4 h-4" /></button>
+                                    <button onClick={() => setReviewMode('VOICE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'VOICE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Mic className="w-4 h-4" /></button>
+                                    <button onClick={() => setReviewMode('IMAGE')} className={`p-3 rounded-xl transition-all ${reviewMode === 'IMAGE' ? 'bg-white text-brand-accent shadow-sm' : 'text-brand-muted'}`}><Camera className="w-4 h-4" /></button>
                                 </div>
                             </div>
 
                             <div className="space-y-8">
                                 {reviewMode === 'KEYBOARD' ? (
                                     <>
-                                        <div className="space-y-4">
+                                        <div className="user-input-area p-6 rounded-2xl mt-4 space-y-4">
                                             <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Meaning Reconstruction</label>
-                                            <textarea 
+                                            <textarea
                                                 value={reviewMeaning}
                                                 onChange={(e) => setReviewMeaning(e.target.value)}
                                                 placeholder="Explain the definition in your own words..."
-                                                className="w-full p-6 border border-brand-border rounded-2xl font-serif italic text-lg bg-brand-bg/10 focus:outline-none focus:border-brand-accent transition-all"
+                                                className="w-full p-6 border border-brand-accent/30 rounded-2xl font-serif italic text-lg bg-white focus:outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10 transition-all"
                                                 disabled={reviewResult !== null}
                                             />
                                         </div>
 
-                                        <div className="space-y-4">
+                                        <div className="user-input-area p-6 rounded-2xl mt-4 space-y-4">
                                             <label className="text-xs font-bold uppercase tracking-widest text-brand-muted">Semantic Integration (2 sentences)</label>
                                             <div className="space-y-4">
-                                                <input 
+                                                <input
                                                     type="text"
                                                     value={reviewSentences[0]}
                                                     onChange={(e) => setReviewSentences([e.target.value, reviewSentences[1]])}
                                                     placeholder="Example context 01..."
-                                                    className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
+                                                    className="w-full p-4 border border-brand-accent/30 rounded-xl font-serif italic bg-white focus:outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10"
                                                     disabled={reviewResult !== null}
                                                 />
-                                                <input 
+                                                <input
                                                     type="text"
                                                     value={reviewSentences[1]}
                                                     onChange={(e) => setReviewSentences([reviewSentences[0], e.target.value])}
                                                     placeholder="Example context 02..."
-                                                    className="w-full p-4 border border-brand-border rounded-xl font-serif italic bg-brand-bg/5 focus:outline-none focus:border-brand-accent"
+                                                    className="w-full p-4 border border-brand-accent/30 rounded-xl font-serif italic bg-white focus:outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10"
                                                     disabled={reviewResult !== null}
                                                 />
                                             </div>
@@ -522,7 +537,7 @@ const Dashboard: React.FC = () => {
 
                             {/* Submit / Retry Button */}
                             {reviewResult === null ? (
-                                <button 
+                                <button
                                     onClick={handleReviewSubmit}
                                     disabled={reviewLoading || !reviewMeaning || !reviewSentences[0] || !reviewSentences[1]}
                                     className="btn-primary w-full py-6 flex items-center justify-center gap-3 disabled:opacity-50"
@@ -537,7 +552,7 @@ const Dashboard: React.FC = () => {
                                     )}
                                 </button>
                             ) : !reviewResult.passed && reviewAttempt < 2 ? (
-                                <button 
+                                <button
                                     onClick={handleRetry}
                                     className="w-full py-6 flex items-center justify-center gap-3 bg-brand-bg border-2 border-brand-accent/30 text-brand-accent rounded-2xl font-bold uppercase tracking-widest text-[11px] hover:bg-brand-accent/5 hover:scale-[1.01] active:scale-[0.99] transition-all"
                                 >
@@ -570,7 +585,7 @@ const Dashboard: React.FC = () => {
                                             </div>
                                         </div>
                                     ) : reviewResult && (
-                                        <div className={`card p-8 space-y-6 ${reviewResult.passed ? 'bg-green-50 border-green-200' : 'bg-white border-brand-border'}`}>
+                                        <div className={`card p-8 space-y-6 system-response-area rounded-2xl mt-4 ${reviewResult.passed ? 'bg-green-50 border-green-200' : 'bg-white border-brand-border'}`}>
                                             {/* Status Header */}
                                             <div className={`flex items-center gap-3 pb-4 border-b ${reviewResult.passed ? 'border-green-200' : 'border-brand-border'}`}>
                                                 {reviewResult.passed ? (
@@ -599,11 +614,10 @@ const Dashboard: React.FC = () => {
                                                         <XCircle className="w-4 h-4 text-red-400 shrink-0" />
                                                     )}
                                                     <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Meaning</h5>
-                                                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
-                                                        reviewResult.meaningAccuracy === 'correct' ? 'bg-green-100 text-green-700' :
-                                                        reviewResult.meaningAccuracy === 'partial' ? 'bg-amber-100 text-amber-700' :
-                                                        'bg-red-100 text-red-600'
-                                                    }`}>
+                                                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${reviewResult.meaningAccuracy === 'correct' ? 'bg-green-100 text-green-700' :
+                                                            reviewResult.meaningAccuracy === 'partial' ? 'bg-amber-100 text-amber-700' :
+                                                                'bg-red-100 text-red-600'
+                                                        }`}>
                                                         {reviewResult.meaningAccuracy}
                                                     </span>
                                                 </div>
@@ -673,8 +687,8 @@ const Dashboard: React.FC = () => {
                         <CheckCircle2 className="w-4 h-4 text-brand-accent" />
                         <h4 className="technical-label">Phase 3: Today's Discovery</h4>
                     </div>
-                    
-                    <motion.div 
+
+                    <motion.div
                         initial={{ y: 20, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         className="card p-12 md:p-20 relative overflow-hidden bg-white border-brand-accent/5"
@@ -686,7 +700,7 @@ const Dashboard: React.FC = () => {
                                         {todayWord.term}
                                     </h3>
                                     <div className="flex items-center gap-6 text-sm font-medium text-brand-muted mt-4 uppercase tracking-widest">
-                                        <button 
+                                        <button
                                             onClick={() => playAudio(todayWord.term)}
                                             className="flex items-center gap-2 hover:text-brand-accent transition-colors"
                                         >
@@ -701,28 +715,33 @@ const Dashboard: React.FC = () => {
                                     {todayWord.difficulty} level
                                 </div>
                             </div>
-                            
+
                             <div className="max-w-3xl space-y-10">
-                                <p className="text-2xl md:text-4xl font-serif italic text-brand-primary leading-tight">
-                                    "{todayWord.definition}"
+                                <p className="text-2xl md:text-3xl font-sans text-brand-primary leading-tight font-medium">
+                                    {todayWord.definition}
                                 </p>
-                                
+
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-10 border-t border-brand-border">
                                     {todayWord.examples.slice(0, 2).map((ex, i) => (
                                         <div key={i} className="space-y-3">
                                             <p className="text-[10px] font-bold uppercase tracking-widest text-brand-muted">Usage Example 0{i + 1}</p>
-                                            <p className="text-lg font-serif italic text-brand-muted leading-relaxed">"{ex}"</p>
+                                            <div className="pl-6 border-l-4 border-brand-accent bg-slate-50 py-4 pr-6 rounded-r-2xl text-lg text-slate-800 font-sans leading-relaxed font-medium shadow-sm">
+                                                "{ex}"
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
 
                                 <div className="pt-10 border-t border-brand-border space-y-6">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="technical-label">Craft Your Own Context</h4>
-                                        <button 
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                        <div className="space-y-1">
+                                            <h4 className="technical-label">Craft Your Own Context</h4>
+                                            <p className="text-[9px] text-brand-muted italic">💡 {profile?.aiUsageDate === new Date().toLocaleDateString('en-CA') ? (profile?.aiUsageToday || 0) : 0}/20 mentoring reviews daily</p>
+                                        </div>
+                                        <button
                                             onClick={handleAiGuidance}
                                             disabled={aiLoading}
-                                            className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-brand-accent hover:text-brand-primary transition-colors disabled:opacity-50"
+                                            className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-brand-accent hover:text-brand-primary transition-colors disabled:opacity-50 self-start sm:self-auto"
                                         >
                                             {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
                                             Mentor Assistant
@@ -731,11 +750,11 @@ const Dashboard: React.FC = () => {
 
                                     <AnimatePresence mode="wait">
                                         {aiGuidance && (
-                                            <motion.div 
+                                            <motion.div
                                                 initial={{ opacity: 0, height: 0 }}
                                                 animate={{ opacity: 1, height: 'auto' }}
                                                 exit={{ opacity: 0, height: 0 }}
-                                                className="bg-brand-accent/5 p-6 rounded-2xl border border-brand-accent/20 space-y-3"
+                                                className="system-response-area bg-brand-accent/5 p-6 rounded-2xl border border-brand-accent/20 space-y-3 mt-4"
                                             >
                                                 <div className="flex items-center gap-3">
                                                     <Lightbulb className="w-4 h-4 text-brand-accent" />
@@ -748,11 +767,11 @@ const Dashboard: React.FC = () => {
                                         )}
 
                                         {aiFeedback && (
-                                            <motion.div 
+                                            <motion.div
                                                 initial={{ opacity: 0, height: 0 }}
                                                 animate={{ opacity: 1, height: 'auto' }}
                                                 exit={{ opacity: 0, height: 0 }}
-                                                className="bg-brand-bg p-8 rounded-3xl border border-brand-border space-y-8 shadow-sm"
+                                                className="system-response-area bg-brand-bg p-8 rounded-3xl border border-brand-border space-y-8 shadow-sm mt-4"
                                             >
                                                 <div className="flex items-center gap-3 pb-4 border-b border-brand-border">
                                                     <BrainCircuit className="w-5 h-5 text-brand-accent" />
@@ -799,14 +818,14 @@ const Dashboard: React.FC = () => {
                                         )}
                                     </AnimatePresence>
 
-                                    <div className="relative">
-                                        <textarea 
+                                    <div className="relative user-input-area p-2 rounded-3xl mt-4">
+                                        <textarea
                                             value={discoverySentence}
                                             onChange={(e) => setDiscoverySentence(e.target.value)}
                                             placeholder="Weave this word into your own reality..."
-                                            className="w-full h-40 p-8 bg-brand-bg/30 border border-brand-border rounded-3xl font-serif italic text-xl focus:outline-none focus:border-brand-accent transition-all resize-none shadow-inner"
+                                            className="w-full h-40 p-8 bg-white border border-brand-accent/30 rounded-3xl font-serif italic text-xl focus:outline-none focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/10 transition-all resize-none"
                                         />
-                                        <button 
+                                        <button
                                             onClick={saveDiscoverySentence}
                                             disabled={savingSentence || feedbackLoading || !discoverySentence.trim()}
                                             className="absolute bottom-6 right-6 p-4 bg-brand-accent text-white rounded-2xl shadow-2xl hover:scale-110 active:scale-95 transition-all disabled:opacity-30 disabled:scale-100"
@@ -837,7 +856,7 @@ const Dashboard: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-12 pt-12 border-t border-brand-border">
                     <div className="space-y-6">
                         <h4 className="technical-label flex items-center gap-2">
-                             Status
+                            Status
                         </h4>
                         <div className="card p-8 bg-brand-bg space-y-6">
                             <div>
@@ -848,7 +867,7 @@ const Dashboard: React.FC = () => {
                                 <p className="text-4xl font-serif font-black italic">{profile?.xp || 0}</p>
                                 <p className="text-[10px] font-bold text-brand-muted uppercase mt-1">Total Experience</p>
                             </div>
-                            
+
                             <div className="pt-6 border-t border-brand-border/10">
                                 <div className="flex items-center justify-between mb-2">
                                     <Flame className="w-5 h-5 text-orange-500" />
@@ -864,11 +883,11 @@ const Dashboard: React.FC = () => {
                             <h4 className="technical-label">Linguistic Journey (Last 7 Days)</h4>
                             <Link to="/library" className="text-xs font-bold text-brand-accent hover:underline">View All History</Link>
                         </div>
-                        
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                             {dailyLogs.length > 0 ? dailyLogs.map((log) => (
-                                <Link 
-                                    key={log.id} 
+                                <Link
+                                    key={log.id}
                                     to={`/word/${log.dailyWord}`}
                                     className="card p-6 group hover:border-brand-accent transition-all bg-white relative overflow-hidden"
                                 >
@@ -896,8 +915,8 @@ const Dashboard: React.FC = () => {
                             <h4 className="technical-label">Refined Knowledge</h4>
                             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
                                 {recentWords.slice(0, 12).map((word) => (
-                                    <Link 
-                                        key={word.id} 
+                                    <Link
+                                        key={word.id}
                                         to={`/word/${word.term}`}
                                         className="card p-4 group hover:bg-brand-accent hover:text-white transition-all text-center"
                                     >
