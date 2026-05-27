@@ -228,4 +228,4 @@ If you encounter any issues or have questions:
 
 ---
 
-**Made with ❤️ for language lovers** | [Visit Wordly](http://localhost:3000)
+**Made with ❤️ for language lovers** | [Visit Wordly](https://worddaily.vercel.app/)
