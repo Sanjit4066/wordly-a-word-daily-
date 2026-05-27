@@ -2,18 +2,13 @@
 
 A refined digital companion for expanding your linguistic repertoire and mastering the nuance of language. **Wordly** combines spaced repetition, contextual learning, and AI-powered insights to transform your vocabulary journey.
 
-![Wordly Screenshots](<img width="2718" height="1611" alt="Screenshot 2026-05-10 012814" src="https://github.com/user-attachments/assets/d86f5c2d-5728-4d8e-8f2b-612b358abdf5" />
-
-)
+![Wordly Screenshots](https://github.com/user-attachments/assets/d86f5c2d-5728-4d8e-8f2b-612b358abdf5)
 
 ## 📸 App Screenshots
 
 | Home & Practice | Word Detail | Daily Discovery |
 | --- | --- | --- |
-| ![Practice screen](<img width="2731" height="1619" alt="Screenshot 2026-05-10 012913" src="https://github.com/user-attachments/assets/d134055e-c7eb-4cb6-ba6b-0155e3a48318" />
-) | ![Word detail screen](<img width="2718" height="1611" alt="Screenshot 2026-05-10 012814" src="https://github.com/user-attachments/assets/f0a4f61c-08b1-4573-91f1-9fa3e73e8d8a" />
-) | ![Daily word screen](<img width="2708" height="1620" alt="Screenshot 2026-05-10 012728" src="https://github.com/user-attachments/assets/ed90547b-2385-4d57-9115-719196bb14c6" />
-) |
+| ![Practice screen](https://github.com/user-attachments/assets/d134055e-c7eb-4cb6-ba6b-0155e3a48318) | ![Word detail screen](https://github.com/user-attachments/assets/f0a4f61c-08b1-4573-91f1-9fa3e73e8d8a) | ![Daily word screen](https://github.com/user-attachments/assets/ed90547b-2385-4d57-9115-719196bb14c6) |
 
 ## ✨ Key Features
 
